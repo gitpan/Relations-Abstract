@@ -13,8 +13,8 @@ WriteMakefile(
   { 
     'DBI'              => 1.13,
     'DBD::mysql'       => 1.18,
-    'Relations'        => 0.93,
-    'Relations::Query' => 0.92,
+    'Relations'        => 0.94,
+    'Relations::Query' => 0.93,
   },
   'PM' => {
      'Abstract.pm' => '$(INST_LIBDIR)/Abstract.pm'

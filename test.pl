@@ -2,6 +2,7 @@
 use DBI;
 use Relations;
 use Relations::Query;
+use lib '.';
 use Relations::Abstract;
 
 configure_settings('abs_test','root','','localhost','3306') unless -e "Settings.pm";
@@ -14,7 +15,13 @@ $dbh = DBI->connect($dsn,$username,$password,{PrintError => 1, RaiseError => 0})
 
 # Create a Relations::Abstract object using the database handle
 
-$abs = new Relations::Abstract($dbh);
+$abs = new Relations::Abstract('fake');
+
+die "create failed" unless ($abs->{dbh} eq 'fake');
+
+$abs->set_dbh($dbh);
+
+die "set_dbh failed" unless ($abs->{dbh} == $dbh);
 
 # Drop, create and use a database
 
@@ -92,11 +99,6 @@ $row_hash = $abs->select_row(-query => $qry);
 
 die "select_rows query failed" unless (($row_hash->{num} == 7) &&
                                        ($row_hash->{descr} eq 'Average'));
-
-$row_hash = $abs->select_row(-query => 'select * from sizes where num=7');
-
-die "select_rows query sting failed" unless (($row_hash->{num} == 7) &&
-                                             ($row_hash->{descr} eq 'Average'));
 
 $abs->update_rows(-table => 'sizes',
                   -where => {num   => 7},
@@ -180,8 +182,8 @@ foreach $column (@$column_ref) {
 }
 
 die "select_column query failed" if ($should_be[1] || 
-                               $should_be[7] || 
-                               $should_be[20]);
+                                     $should_be[7] || 
+                                     $should_be[20]);
 
 $affected_rows = $abs->delete_rows(-table => 'sizes',
                                    -where => {num => 20});

@@ -2,9 +2,12 @@
 # programming space with the Perl DBI.
 
 package Relations::Abstract;
+
 require Exporter;
 require DBI;
 require 5.004;
+require Relations;
+require Relations::Query;
 
 use Relations;
 use Relations::Query;
@@ -19,27 +22,29 @@ use Relations::Query;
 # This program is free software, you can redistribute it and/or modify it under
 # the same terms as Perl itself
 
-$Relations::Abstract::VERSION='0.93';
+$Relations::Abstract::VERSION='0.94';
 
 @ISA = qw(Exporter);
 
 @EXPORT = qw(
-              new
-            );		
+  new
+);		
 
 @EXPORT_OK = qw(
-                new
-                delete_rows
-                insert_id
-                insert_row
-                run_query 
-                select_column 
-                select_field 
-                select_insert_id
-                select_matrix
-                select_row 
-                update_rows
-               );
+  new
+  set_dbh 
+  run_query 
+  select_field 
+  select_row 
+  select_column 
+  select_matrix
+  insert_row
+  insert_id
+  select_insert_id
+  update_rows
+  delete_rows
+  report_error
+);
 
 %EXPORT_TAGS = ();
 
@@ -49,7 +54,7 @@ use strict;
 
 
 
-# Create a Relations::Abstract object.
+### Creates a new Relations::Abstract object.
 
 sub new {
 
@@ -57,7 +62,7 @@ sub new {
 
   # Get all the arguments passed
 
-  my ($dbh) = rearrange(['DBH'],@_);
+  my ($dbh) = shift;
 
   # Create the hash to hold all the vars
   # for this object.
@@ -73,14 +78,15 @@ sub new {
 
   $self->{dbh} = $dbh if $dbh;
 
-  # Return thyself
+  # Give thyself
 
   return $self;
 
 }
 
 
-# This routine just sets the default database handle to use.
+
+### Sets the default database handle to use.
 
 sub set_dbh {
 
@@ -90,7 +96,7 @@ sub set_dbh {
 
   # Get the DBH sent
 
-  my ($dbh) = rearrange(['DBH'],@_);
+  my ($dbh) = shift;
 
   # Set the database handle.
 
@@ -100,12 +106,14 @@ sub set_dbh {
 
 
 
-# This routine runs a query and reports if there's an error.
+### Runs a query.
 
 sub run_query {
 
-  ### What we're doing here is sending the query string to the dbh, and
-  ### reporting an error if the execute failed.
+  ### What we're doing here is sending the query to 
+  ### the dbh, and reporting an error if the execute 
+  ### failed. The query can be sent as a string, hash
+  ### or Relations::Query object.
 
   # Know thyself
 
@@ -113,12 +121,11 @@ sub run_query {
 
   # Get the query sent
 
-  my ($query) = rearrange(['QUERY'],@_);
+  my ($query) = shift;
 
-  # If we were sent a query object, get the query 
-  # string from it. 
+  # Convert whatever we were sent to a query string.
 
-  $query = $query->get() if ref $query;
+  $query = to_string($query);
 
   # Declare a statement handle and prepare the query.
 
@@ -126,52 +133,45 @@ sub run_query {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('run_query',$query);
+  $sth->execute() or return $self->report_error("run_query failed: $query\n");
 
   # Finish it off.
 
   $sth->finish();
 
+  # Return 1 cuz it worked
+
+  return 1;
+
 }
 
 
 
-# This routine runs a query using a where clause, returns the requested 
-# items value and reports if there's an error.
+### Select a field's data.
 
 sub select_field {
 
-  ### What we're doing here is creating and sending the query string to the
-  ### dbh, retreiving the requested item and reporting an error if the execute failed.
+  ### What we're doing here is creating and sending the query 
+  ### string to the dbh, retreiving the requested item and 
+  ### reporting an error if the execute failed. We can take
+  ### simple info like the table and where clause, or complex
+  ### info like a full query.
 
   # Know thyself
 
   my $self = shift;
 
-  # Get the field, table, where clause and dbh sent
+  # Get the field, table, where clause sent
 
   my ($field,$table,$where,$query) = rearrange(['FIELD','TABLE','WHERE','QUERY'],@_);
 
-  # Unless we were sent query info
+  # Unless we were sent query info, make some.
 
-  unless ($query) {
+  $query = "select $field from $table where " . equals_clause($where) unless $query;
 
-    # Get the info for the where clause;
+  # Convert whatever we were sent to a query string.
 
-    $where = equals_clause($where);
-
-    # Declare a statement handle and prepare the query.
-
-    $query = "select $field from $table where $where";
-
-  } else {
-
-    # If we were sent a query object, get the query 
-    # string from it. 
-
-    $query = $query->get() if ref $query;
-
-  }
+  $query = to_string($query);
 
   # Declare a statement handle and prepare the query.
 
@@ -179,7 +179,7 @@ sub select_field {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('select_field',$query) and return '';
+  $sth->execute() or return $self->report_error("select_field failed: $query\n");
 
   # Declare hash for retrieving value, and variable to hold value.
 
@@ -207,14 +207,15 @@ sub select_field {
 
 
 
-# This routine select a row of data given a table and a where clause, 
-# returns the hash reference, and reports if there's an error.
+### Selects a row of data.
 
 sub select_row {
 
-  ### What we're doing here is creating the query string and sending it to 
-  ### the dbh, retreiving the frist row's hash, returning it unless there's 
-  ### an error. If so we'll report the error.
+  ### What we're doing here is creating and sending the query 
+  ### string to the dbh, retreiving the requested item and 
+  ### reporting an error if the execute failed. We can take
+  ### simple info like the table and where clause, or complex
+  ### info like a full query.
 
   # Know thyself
 
@@ -224,26 +225,13 @@ sub select_row {
 
   my ($table,$where,$query) = rearrange(['TABLE','WHERE','QUERY'],@_);
 
-  # Unless we were sent query info
+  # Unless we were sent query info, make some.
 
-  unless ($query) {
+  $query = "select * from $table where " . equals_clause($where) unless $query;
 
-    # Get the info for the where clause;
+  # Convert whatever we were sent to a query string.
 
-    $where = equals_clause($where);
-
-    # Form query
-
-    $query = "select * from $table where $where"; 
-
-  } else {
-
-    # If we were sent a query object, get the query 
-    # string from it. 
-
-    $query = $query->get() if ref $query;
-
-  }
+  $query = to_string($query);
 
   # Declare a statement handle and prepare the query.
 
@@ -251,7 +239,7 @@ sub select_row {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('select_row',$query) and return '';
+  $sth->execute() or return $self->report_error("select_row failed: $query\n");
 
   # Get the value returned.
 
@@ -269,43 +257,31 @@ sub select_row {
 
 
 
-# This routine select a column of data given a field, table and a where
-# clause, returns the array reference, and reports if there's an error.
+### Selects a column of data.
 
 sub select_column {
 
-  ### What we're doing here is creating the query string and sending it to 
-  ### the dbh, retreiving the requested column's values, returning it unless 
-  ### there's an error. If so we'll report the error.
+  ### What we're doing here is creating and sending the query 
+  ### string to the dbh, retreiving the requested items and 
+  ### reporting an error if the execute failed. We can take
+  ### simple info like the table and where clause, or complex
+  ### info like a full query.
 
   # Know thyself
 
   my $self = shift;
 
-  # Get the table and where clause sent
+  # Get the field table and where clause sent
 
   my ($field,$table,$where,$query) = rearrange(['FIELD','TABLE','WHERE','QUERY'],@_);
 
-  # Unless we were sent query info
+  # Unless we were sent query info, make some.
 
-  unless ($query) {
+  $query = "select $field from $table where " . equals_clause($where) unless $query;
 
-    # Get the info for the where clause;
+  # Convert whatever we were sent to a query string.
 
-    $where = equals_clause($where);
-
-    # Declare a statement handle and prepare the query.
-
-    $query = "select $field from $table where $where";
-
-  } else {
-
-    # If we were sent a query object, get the query 
-    # string from it. 
-
-    $query = $query->get() if ref $query;
-
-  }
+  $query = to_string($query);
 
   # Declare a statement handle and prepare the query.
 
@@ -313,7 +289,7 @@ sub select_column {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('select_colum',$query) and return '';
+  $sth->execute() or return $self->report_error("select_colum failed: $query\n");
 
   # Create an array to hold the data
 
@@ -343,14 +319,15 @@ sub select_column {
 
 
 
-# This routine select a column of data given a field, table and  a where
-# clause, returns the array reference, and reports if there's an error.
+### Selects a matrix (rows of columns) of data.
 
 sub select_matrix {
 
-  ### What we're doing here is creating the query string and sending it to 
-  ### the dbh, retreiving the rows of hashes, returning it unless there's 
-  ### an error. If so we'll report the error.
+  ### What we're doing here is creating the query string 
+  ### and sending it to the dbh, retreiving the rows of hashes, 
+  ### returning them unless there's an error. If so we'll report 
+  ### the error. We can take simple info like the table and where 
+  ### clause, or complex info like a full query.
 
   # Know thyself
 
@@ -360,26 +337,13 @@ sub select_matrix {
 
   my ($table,$where,$query) = rearrange(['TABLE','WHERE','QUERY'],@_);
 
-  # Unless we were sent query info
+  # Unless we were sent query info, make some.
 
-  unless ($query) {
+  $query = "select * from $table where " . equals_clause($where) unless $query;
 
-    # Get the info for the where clause;
+  # Convert whatever we were sent to a query string.
 
-    $where = equals_clause($where);
-
-    # Declare a statement handle and prepare the query.
-
-    $query = "select * from $table where $where";
-
-  } else {
-
-    # If we were sent a query object, get the query 
-    # string from it. 
-
-    $query = $query->get() if ref $query;
-
-  }
+  $query = to_string($query);
 
   # Declare a statement handle and prepare the query.
 
@@ -387,7 +351,7 @@ sub select_matrix {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('select_matrix',$query) and return '';
+  $sth->execute() or return $self->report_error("select_matrix failed: $query\n");
 
   # Create an array to hold the data
 
@@ -421,8 +385,7 @@ sub select_matrix {
 
 
 
-# This routine inserts a row of data into a table and returns the number 
-# of affected rows. If there's an error it returns 0.
+### Inserts a row of data into a table.
 
 sub insert_row {
 
@@ -452,7 +415,7 @@ sub insert_row {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('insert_id',$query) and return 0;
+  $sth->execute() or return $self->report_error("insert_row failed: $query\n");
 
   # Finish it off.
 
@@ -466,15 +429,13 @@ sub insert_row {
 
 
 
-# This routine inserts a row data into a table with an autoincrementing 
-# primary key and returns the new id. If there's an error it returns a
-# zero.
+### Inserts a row data into a table and returns the new id.
 
 sub insert_id {
 
   ### What we're doing here is sending the query string to the dbh, retreiving 
   ### the new id, and sending it back, unless there's an error. If there's an 
-  ### error, we'll send backa zero.
+  ### error, we'll send back a zero.
 
   # Know thyself
 
@@ -498,7 +459,7 @@ sub insert_id {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('insert_id',$query) and return 0;
+  $sth->execute() or return $self->report_error("insert_id failed: $query\n");
 
   # Finish it off.
 
@@ -512,10 +473,7 @@ sub insert_id {
 
 
 
-# This routine is a combo of select_item and insert_id. It first tries to 
-# lookup a record's id using id, table, and a where clause. If the lookup 
-# is unsuccessful, it'll try to add the record to the table and then return 
-# the new id.
+### Selects or inserts data and returns the id.
 
 sub select_insert_id {
 
@@ -557,14 +515,14 @@ sub select_insert_id {
 
   # If we've come this far, then neither was successful. Indicate this.
 
-  return 0;
+  return $self->report_error("select_insert_id failed: id: $id table: $table where: $where set: $set\n");
+
 
 }
 
 
 
-# This routine updates rows data in a table and returns the number of 
-# updated rows. If there's an error it returns 0.
+### Updates rows of data in a table and returns the number of updated rows. 
 
 sub update_rows {
 
@@ -595,7 +553,7 @@ sub update_rows {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('update_rows',$query) and return 0;
+  $sth->execute() or return $self->report_error("update_rows failed: $query\n");
 
   # Finish it off.
 
@@ -609,8 +567,7 @@ sub update_rows {
 
 
 
-# This routine update a row data into a table and returns the number of 
-# delete rows. If there's an error it returns 0.
+### Deletes rows from a table and returns the number of deleted rows.
 
 sub delete_rows {
 
@@ -640,7 +597,7 @@ sub delete_rows {
 
   # Execute it.
 
-  $sth->execute() or $self->report_error('delete_rows',$query) and return 0;
+  $sth->execute() or return $self->report_error("delete_rows failed: $query\n");
 
   # Finish it off.
 
@@ -654,7 +611,7 @@ sub delete_rows {
 
 
 
-# This routine reports a failed query if PrintError is enabled in the dbh.
+### Reports a failed routine if PrintError is enabled in the dbh.
 
 sub report_error {
 
@@ -664,21 +621,19 @@ sub report_error {
 
   # If DBI isn't printing errors neither are we.
 
-  return 1 unless $self->{dbh}->{PrintError};
+  return unless $self->{dbh}->{PrintError};
 
-  # Get the location of the failure and and that query that caused the 
-  # failure.
+  # Get the failure message
 
-  my $location = shift;
-  my $query = shift;
+  my $message = shift;
 
   # Tell the user what's up.
 
-  print "$location failed:\n$query\n"; 
+  print STDERR $message;
+
+  return;
 
 }
-
-
 
 $Relations::Abstract::VERSION;
 
@@ -690,14 +645,12 @@ Relations::Abstract - DBI/DBD::mysql Functions to Save Development Time and Code
 
 =head1 SYNOPSIS
 
-  # DBI/Relations Script that creates a couple tables and adds to them.
-
   use DBI;
   use Relations::Abstract;
 
   $dsn = "DBI:mysql:mysql";
 
-  $dbh = DBI->connect($dsn,$username,$password,{PrintError => 1, RaiseError => 0});
+  $abstract = DBI->connect($dsn,$username,$password,{PrintError => 1, RaiseError => 0});
 
   # Create a Relations::Abstract object using the database handle
 
@@ -705,13 +658,13 @@ Relations::Abstract - DBI/DBD::mysql Functions to Save Development Time and Code
 
   # Drop, create and use a database
 
-  $abs->run_query("drop database if exists abs_test");
-  $abs->run_query("create database abs_test");
-  $abs->run_query("use abs_test");
+  $abstract->run_query("drop database if exists abs_test");
+  $abstract->run_query("create database abs_test");
+  $abstract->run_query("use abs_test");
 
   # Create a table
 
-  $abs->run_query("
+  $abstract->run_query("
     create table sizes
       (
         size_id int unsigned auto_increment,
@@ -727,12 +680,13 @@ Relations::Abstract - DBI/DBD::mysql Functions to Save Development Time and Code
   # Retreive size 12 if already within the database, else add
   # size 12 information into the database and get its size_id.
 
-  $size_id = select_insert_id(-dbh   => $dbh,
-                              -id    => 'size_id',
-                              -table => "sizes",
-                              -where => {num          => 12},
-                              -set   => {num          => 12,
-                                         description  => $dbh->quote('Bigfoot')});
+  $size_id = $abstract->select_insert_id(-id    => 'size_id',
+                                         -table => "sizes",
+                                         -where => {num    => 12},
+                                         -set   => {num    => 12,
+                                                    descr  => $abstract->{dbh}->quote('Bigfoot')});
+
+  $abstract->report_error("Nothing left to demo!");
 
 =head1 ABSTRACT
 
@@ -755,10 +709,9 @@ DBI. That's it. It's there just to simplify the amount of code one has
 to write and maintain with respect long and complex database tasks.
 
 The simplest example is the run_query function. It takes a SQL string 
-(and an optional dbh) and prepares, executes, and finishes that SQL
-string via DBI.
+and prepares, executes, and finishes that SQL string via DBI.
 
-  $abs->run_query("drop database if exists abs_test");
+  $abstract->run_query("drop database if exists abs_test");
 
 This puts "drop database if exists abs_test" through the
 prepare, execute, and finish functions of DBI.
@@ -768,14 +721,13 @@ for either looking up a certain record's primary id value if it already
 exists in the table, or adding that record and retreiving its new primary 
 id value if it does not already exist in the table.  
 
-  $size_id = $abs->select_insert_id(-dbh   => $dbh,
-                                    -id    => 'size_id',
-                                    -table => "sizes",
-                                    -where => {num          => 12},
-                                    -set   => {num          => 12,
-                                               description  => $dbh->quote('Bigfoot')});
+  $size_id = $abstract->select_insert_id(-id    => 'size_id',
+                                         -table => "sizes",
+                                         -where => {num    => 12},
+                                         -set   => {num    => 12,
+                                                    descr  => $abstract->{dbh}->quote('Bigfoot')});
 
-This puts several SQL string through the prepare, execute, and finish 
+This puts several SQL strings through the prepare, execute, and finish 
 functions of DBI. 
 
 First using the primary id name, the table name, and the where clause, 
@@ -784,7 +736,7 @@ where num=12", and prepares, executes, and finishes it. If a row is
 returned, select_insert_id returns the looked up value of size_id.
 
 If a row is not returned, select_insert_id then creates a another SQL 
-statement, "insert into sizes set num=12,description='Bigfoot' " using 
+statement, "insert into sizes set num=12,descr='Bigfoot' " using 
 the table name, and set clause, and puts it through DBI. After that,
 it runs another SQL statement "select last_insert_id() as id" to 
 retrieve the new primary id value for the new record. Though the function
@@ -793,23 +745,26 @@ if-else's.
 
 =head2 CALLING RELATIONS::ABSTRACT ROUTINES
 
-All standard Abstract routines use both an ordered and named 
-argument calling style. This is because some routines have as many as 
-five arguments, and the code is easier to understand given a named 
-argument style, but since some people, however, prefer the ordered argument 
-style because its smaller, I'm glad to do that too.
+Some Abstract routines, those with more than one argument, use an ordered, 
+named and hashed argument calling style, and some, those with only one 
+argument, just use an ordered argument calling style. This is because 
+some routines have as many as five arguments, and the code is easier to 
+understand given a named argument style, but since some people, however, 
+prefer the ordered argument style because its smaller, I'm glad to do that 
+too. Furthermore, if you want to name a single argument in a function, 
+you're a bit loopy. 
 
 If you use the ordered argument calling style, such as
 
-  $hash_ref =  $abs->select_row('sizes',{num => 10});
+  $hash_ref =  $abstract->select_row('sizes',{num => 10});
 
 the order matters, and you should consult the function defintions 
 later in this document to determine the order to use.
 
 If you use the named argument calling style, such as
 
-  $hash_ref =  $abs->select_row(-table => 'sizes',
-                                -where => {num => 10});
+  $hash_ref =  $abstract->select_row(-table => 'sizes',
+                                     -where => {num => 10});
 
 the order does not matter, but the names, and minus signs preceeding them, do.
 You should consult the function defintions later in this document to determine 
@@ -818,13 +773,33 @@ the names to use.
 In the named arugment style, each argument name is preceded by a dash.  
 Neither case nor order matters in the argument list.  -table, -Table, and 
 -TABLE are all acceptable.  In fact, only the first argument needs to begin with 
-a dash.  If a dash is present in the first argument, Relations.pm assumes
+a dash.  If a dash is present in the first argument, Relations::Abstract assumes
 dashes for the subsequent ones.
 
-=head2 WHERE AND SET CLAUSES
+If you use the hashed argument calling style, such as
 
-Many of the Relations functions require arguments named where and set.
-These arugments are used to populate (respectively) the 'where' and 'set'
+  $hash_ref =  $abstract->select_row({table => 'sizes',
+                                      where => {num => 10}});
+
+or
+
+  $hash_ref =  $abstract->select_row({-table => 'sizes',
+                                      -where => {num => 10}});
+
+the order does not matter, but the names, and curly braces do, (minus signs are
+optional). You should consult the function defintions later in this document to 
+determine the names to use.
+
+In the hashed arugment style, no dashes are needed, but they won't cause problems
+if you put them in. Neither case nor order matters in the argument list. table, 
+Table, and TABLE are all acceptable. If a hash is the first argument, 
+Relations::Abstract assumes that is the only argument that matters, and ignores any 
+other arguments after the {}'s.
+
+=head2 WHERE AND SET ARGUMENTS
+
+Many of the Relations functions recognize arguments named where and set.
+These arguments are used to populate (respectively) the 'where' and 'set'
 areas of SQL statements. Since both these areas can require a varying number
 of entries, each can be sent as a hash, array, or string.
 
@@ -835,31 +810,32 @@ pairs, concatented with an ' and ' and placed right after the where keyword.
 
 For example,
 
-  $hash_ref =  $abs->select_row(-table => 'sizes',
-                                -where => {num         => 10,
-                                           description => $dbh->quote('Momma Bear')});
+  $hash_ref =  $abstract->select_row(-table => 'sizes',
+                                     -where => {num   => 10,
+                                                descr => $dbh->quote('Momma Bear')});
 
 creates and executes the SQL statment "select * from sizes where num=10 and 
-description='Momma Bear'".
+descr='Momma Bear'".
 
 If sent as an array, a where argument would become a string of array members,
 concatented with an ' and '.  and placed right after the 'where' keyword. 
 
 For example,
 
-  $hash_ref =  $abs->select_row(-table => 'sizes',
-                                -where => ["num < 8",
-                                           "description not in ('Momma Bear','Papa Bear')"]);
+  $hash_ref =  $abstract->select_row(-table => 'sizes',
+                                     -where => ["num < 8",
+                                                "descr not in ('Momma Bear','Papa Bear')"]);
 
-creates and executes the SQL statment "select * from sizes where num < 8 and 
-description not in ('Momma Bear','Papa Bear')".
+creates and executes the SQL statment 
+"select * from sizes where num < 8 and descr not in ('Momma Bear','Papa Bear')".
 
-If sent as a string, a where is placed as is right after the 'where' keyword.
+If sent as a string, a where argument is placed as is right after the 'where' 
+keyword.
 
 For example,
 
-  $hash_ref =  $abs->select_row(-table => 'sizes',
-                                -where => "num > 10 or (num < 5 and num > 0)");
+  $hash_ref =  $abstract->select_row(-table => 'sizes',
+                                     -where => "num > 10 or (num < 5 and num > 0)");
 
 creates and executes the SQL statment "select * from sizes where num < 8 or 
 (num < 5 and num > 0)".
@@ -871,38 +847,58 @@ pairs, concatented with an ',' and placed right after the 'set' keyword.
 
 For example,
 
-  $abs->insert_row(-table => 'sizes',
-                   -set   => {num         => 7,
-                              description => $dbh->quote('Goldilocks')});
+  $abstract->insert_row(-table => 'sizes',
+                        -set   => {num   => 7,
+                                   descr => $dbh->quote('Goldilocks')});
 
-creates and executes the SQL statment "insert into sizes set num=7, 
-description='Goldilocks'".
+creates and executes the SQL statment 
+"insert into sizes set num=7, descr='Goldilocks'".
 
 If sent as an array, a set argument would become a string of array members,
 concatented with an ','.  and placed right after the 'set' keyword. 
 
 For example,
 
-  $abs->insert_row(-table => 'sizes',
-                   -set   => ["num=7",
-                              "description='Goldilocks'"]);
+  $abstract->insert_row(-table => 'sizes',
+                        -set   => ["num=7",
+                                   "descr='Goldilocks'"]);
 
-creates and executes the SQL statment "insert into sizes set num=7, 
-description='Goldilocks'".
+creates and executes the SQL statment 
+"insert into sizes set num=7, descr='Goldilocks'".
 
 If sent as a string, a set argument is placed as is right after the 
 'set' keyword.
 
 For example,
 
-  $abs->insert_row(-table => 'sizes',
-                   -set   => "num=7,description='Goldilocks'");
+  $abstract->insert_row(-table => 'sizes',
+                        -set   => "num=7,descr='Goldilocks'");
 
-creates and executes the SQL statment "insert into sizes set num=7, 
-description='Goldilocks'".
+creates and executes the SQL statment 
+"insert into sizes set num=7,descr='Goldilocks'".
 
 I'm not sure if the set argument needs to be so flexible, but I thought I'd 
 make it that way, just in case.
+
+=head2 QUERY ARGUMENTS
+
+Many of the Relations functions recognize an argument named query. This
+argument can either be a string, hash or Relations::Query object. 
+
+The following calls are all equivalent
+
+  $object->function("select nothing from void");
+
+  $object->function({select => 'nothing',
+                     from   => 'void'});
+
+  $object->function(Relations::Query->new(-select => 'nothing',
+                                          -from   => 'void'));
+
+
+Since whatever query value is sent to Relations::Query's to_string() 
+function, consult the to_string() function in the Relations::Query 
+documentation for more (just a little really) information.
 
 =head1 LIST OF RELATIONS::ABSTRACT FUNCTIONS
 
@@ -910,235 +906,240 @@ An example of each function is provided in 'test.pl'.
 
 =head2 new
 
-  $abs = Relations::Abstract->new($dbh);
+  $abstract = Relations::Abstract->new($dbh);
 
-  $abs = new Relations::Abstract(-dbh => $dbh);
+Creates a new abstract object using the DBI database handle. This
+handle will be used for all DBI interactions.
 
-=head2 delete_rows
+=head2 set_dbh
 
-  $abs->delete_rows($table,$where,$set);
+  $abstract->set_dbh($dbh);
 
-  $abs->delete_rows(-table => $table,
-                    -where => $where,
-                    -set   => $set);
+Sets the default database handle to use for all DBI calls.
 
-Deletes all records from $table that satisfy the $where clause. Uses an 
-SQL statement in the form:
+=head2 run_query
 
-  delete from $table where $where;
+  $abstract->run_query($query);
+
+Runs the given query, $query.
+
+=head2 select_field
+
+  $value = $abstract->select_field($field,$table,$where);
+
+  $value = $abstract->select_field(-field => $field,
+                                   -table => $table,
+                                   -where => $where);
+
+  $value = $abstract->select_field(-field => $field,
+                                   -query => $query);
+
+Returns the first $field value from $table that satisfies $where.
+It can also grab $field's value from the query specified by 
+$query. Uses SQL statements in the form:
+
+  select $field from $table where $where
+or
+  $query
+
+=head2 select_row
+
+  $hash_ref = $abstract->select_row($table,$where);
+
+  $hash_ref = $abstract->select_row(-table => $table,
+                                    -where => $where);
+
+  $hash_ref = $abstract->select_row(-query => $query);
+
+Returns a hash reference for the first row in $table that satisfies 
+$where. It can also grab the first row from the query specified by 
+$query. Uses SQL statements in the form:
+
+  select * from $table where $where
+or
+  $query
+
+=head2 select_column
+
+  $array_ref = $abstract->select_column($field,$table,$where);
+
+  $array_ref = $abstract->select_column(-field => $field,
+                                        -table => $table,
+                                        -where => $where);
+
+  $array_ref = $abstract->select_column(-field => $field,
+                                        -query => $query);
+
+Returns an array reference of all $field values from $table that 
+satisfy $where. It can also grab all $field's values from the 
+query specified by $query. Uses SQL statements in the form:
+
+  select $field from $table where $where
+or 
+  $query
+
+=head2 select_matrix
+
+  $array_ref = $abstract->select_matrix($table,$where);
+
+  $array_ref = $abstract->select_matrix(-table => $table,
+                                        -where => $where);
+
+  $array_ref = $abstract->select_matrix(-query => $query);
+
+Returns an array reference of hash references of all rows in $table 
+that satisfy $where. It can also grab all values from the query 
+specified by $query. Uses SQL statements in the form:
+
+  select * from $table where $where
+or
+  $query;  
+
+=head2 insert_row
+
+  $abstract->insert_row($table,$set);
+
+  $abstract->insert_row(-table => $table,
+                        -set   => $set);
+
+Inserts $set into $table. Uses SQL statements in the form:
+
+  insert into $table set $set
 
 =head2 insert_id
 
-  $abs->insert_id($table,$set);
+  $abstract->insert_id($table,$set);
 
-  $abs->insert_id(-table => $table,
-                  -set   => $set);
+  $abstract->insert_id(-table => $table,
+                       -set   => $set);
 
 For tables with auto incrementing primary keys. Inserts $set into $table
 and returns the new primary key value. Uses SQL statements in the form:
 
-  insert into $table set $set;
-
-  select last_insert_id() as id;
-
-=head2 insert_row
-
-  $abs->insert_row($table,$set);
-
-  $abs->insert_row(-table => $table,
-                   -set   => $set);
-
-Inserts a row of set into a table. Uses SQL statements in the form:
-
-  insert into $table set $set;
-
-=head2 run_query
-
-  $abs->run_query($query);
-
-  $abs->run_query(-query => $query);
-
-Runs the given query, $query.
-
-=head2 select_column
-
-  $array_ref = $abs->select_column($field,$table,$where);
-
-  $array_ref = $abs->select_column(-field => $field,
-                                   -table => $table,
-                                   -where => $where);
-
-  $array_ref = $abs->select_column(-field => $field,
-                                   -query => $query);
-
-Returns an array reference of all $field values from $table that 
-satisfy the $where clause. It can also grab all $field's values from 
-the query specified by $query, which can be a string or a 
-Relations::Query object. Uses SQL statements in the form:
-
-  select $field from $table where $where; or 
-  $query;  
-
-=head2 select_field
-
-  $value = select_field($field,$table,$where);
-
-  $value = select_field(-field => $field,
-                        -table => $table,
-                        -where => $where);
-
-  $value = select_field(-field => $field,
-                        -query => $query);
-
-Returns the first $field value from $table that satisfies the 
-$where clause.  It can also grab $field's value from the query 
-specified by $query, which can be a string or a Relations::Query 
-object. Uses SQL statements in the form: Uses SQL statements in 
-the form:
-
-  select $field from $table where $where; or
-  $query;  
+  insert into $table set $set
+and
+  select last_insert_id() as id
 
 =head2 select_insert_id
 
-  select_insert_id($id,$table,$where,$set);
+  $abstract->select_insert_id($id,$table,$where,$set);
 
-  select_insert_id(-id    => $id,
-                   -table => $table,
-                   -where => $where,
-                   -set   => $set);
+  $abstract->select_insert_id(-id    => $id,
+                              -table => $table,
+                              -where => $where,
+                              -set   => $set);
 
 For tables with auto incrementing primary keys. It first tries to 
-return the first $id values from $table that satisfies the criteria
-defined by $where. If that doesn't work, it then inserts $set into
-$table, and returns the newly generated primary id. It does not use
-$id to lookup the primary id value. It uses SQL statements in the 
-form:
+return the first $id value from $table that satisfies $where. If 
+that doesn't work, it then inserts $set into $table, and returns 
+the newly generated primary id. It does not use $id to lookup the 
+primary id value, but instead last_insert_id(). It uses SQL 
+statements in the form:
 
-  select $id from $table where $where;
-
-  insert into $table set $set;
-
-  select last_insert_id() as id;
-
-=head2 select_matrix
-
-  $array_ref = select_matrix($table,$where);
-
-  $array_ref = select_matrix(-table => $table,
-                             -where => $where);
-
-Returns an array reference of hash references of all rows $table that 
-satisfy the $where clause. It can also grab all values from the query 
-specified by $query, which can be a string or a Relations::Query 
-object. Uses SQL statements in the form:
-
-  select * from $table where $where; or
-  $query;  
-
-=head2 select_row
-
-  $hash_ref = select_row($table,$where);
-
-  $hash_ref = select_row(-table => $table,
-                         -where => $where);
-
-Returns a hash reference for the first row in $table that satisfies 
-the criteria set by $where. It can also grab the first row from the 
-query  specified by $query, which can be a string or a Relations::Query 
-object. Uses SQL statements in the form:
-
-  select * from $table where $where; or
-  $query;  
-
-=head2 set_dbh
-
-  set_dbh($dbh);
-
-  set_dbh(-dbh => $dbh);
-
-Sets the default database handle to use for all DBI calls. This $dbh can 
-be overridden in any of the other functions by sending another $dbh as the
-last ordered argument, or as the -dbh named argument.
+  select $id from $table where $where
+and (if the first returns nothing)
+{
+  insert into $table set $set
+and
+  select last_insert_id() as id
+}
 
 =head2 update_rows
 
-  update_rows($table,$where,$set);
+  $abstract->update_rows($table,$where,$set);
 
-  update_rows(-table => $table,
-              -where => $where,
-              -set   => $set);
+  $abstract->update_rows(-table => $table,
+                         -where => $where,
+                         -set   => $set);
 
-Updates all rows in $table that satisfy the $where clause with $set. Uses
-SQL statements in the form:
+Updates all rows in $table that satisfy $where with $set. Uses
+an SQL statements in the form:
 
-  update $table set $set where $where;
+  update $table set $set where $where
+
+=head2 delete_rows
+
+  $abstract->delete_rows($table,$where);
+
+  $abstract->delete_rows(-table => $table,
+                         -where => $where);
+
+Deletes all records from $table that satisfy $where. Uses an 
+SQL statement in the form:
+
+  delete from $table where $where
+
+=head2 report_error
+
+  $abstract->report_error($message);
+
+Reports an error if the dbh PrintError is set to true. Always 
+returns nothing with "return;" so you can use it to return a
+a null value when something fails.
+
+=head1 LIST OF RELATIONS::QUERY PROPERTIES
+
+=head2 dbh
+
+The DBI database handle.
 
 =head1 TODO LIST
 
-=head2 Object Oriented interface
-
-=head2 Add select_row_array, select_row_arrayref, and select_row_hashref. 
+=head2 Create an insert_rows() function.
 
 =head1 OTHER RELATED WORK
 
-=head2 Relations
+=head2 Relations (Perl)
 
-This perl library contains functions for dealing with databases.
-It's mainly used as the the foundation for all the other 
-Relations modules. It may be useful for people that deal with
-databases in Perl as well.
+Contains functions for dealing with databases. It's mainly used as 
+the foundation for the other Relations modules. It may be useful for 
+people that deal with databases as well.
 
-=head2 Relations::Abstract
+=head2 Relations-Query (Perl)
 
-A DBI/DBD::mysql Perl module. Meant to save development time and code 
-space. It takes the most common (in my experience) collection of DBI 
-calls to a MySQL databate, and changes them to one liner calls to an
-object.
-
-=head2 Relations::Query
-
-An Perl object oriented form of a SQL select query. Takes hash refs,
-array refs, or strings for different clauses (select,where,limit)
+An object oriented form of a SQL select query. Takes hashes.
+arrays, or strings for different clauses (select,where,limit)
 and creates a string for each clause. Also allows users to add to
 existing clauses. Returns a string which can then be sent to a 
-MySQL DBI handle. 
+database. 
 
-=head2 Relations.Admin.inc.php
+=head2 Relations-Abstract (Perl)
 
-Some generalized PHP classes for creating Web interfaces to relational 
-databases. Allows users to add, view, update, and delete records from 
+Meant to save development time and code space. It takes the most common 
+(in my experience) collection of calls to a MySQL database, and changes 
+them to one liner calls to an object.
+
+=head2 Relations-Admin (PHP)
+
+Some generalized objects for creating Web interfaces to relational 
+databases. Allows users to insert, select, update, and delete records from 
 different tables. It has functionality to use tables as lookup values 
 for records in other tables.
 
-=head2 Relations::Family
+=head2 Relations-Family (Perl)
 
-A Perl query engine for relational databases.  It queries members from 
+Query engine for relational databases.  It queries members from 
 any table in a relational database using members selected from any 
 other tables in the relational database. This is especially useful with 
-complex databases; databases with many tables and many connections 
+complex databases: databases with many tables and many connections 
 between tables.
 
-=head2 Relations::Display
+=head2 Relations-Display (Perl)
 
-An Perl module creating GD::Graph objects from database queries. It 
-takes in a query through a Relations::Query object, along with 
-information pertaining to which field values from the query results are 
-to be used in creating the graph title, x axis label and titles, legend 
-label (not used on the graph) and titles, and y axis data. Returns a 
-GD::Graph object built from from the query.
+Module creating graphs from database queries. It takes in a query through a 
+Relations-Query object, along with information pertaining to which field 
+values from the query results are to be used in creating the graph title, 
+x axis label and titles, legend label (not used on the graph) and titles, 
+and y axis data. Returns a graph and/or table built from from the query.
 
-=head2 Relations::Choice
+=head2 Relations-Report (Perl)
 
-An Perl CGI interface for Relations::Family, Reations::Query, and 
-Relations::Display. It creates complex (too complex?) web pages for 
-selecting from the different tables in a Relations::Family object. 
-It also has controls for specifying the grouping and ordering of data
-with a Relations::Query object, which is also based on selections in 
-the Relations::Family object. That Relations::Query can then be passed
-to a Relations::Display object, and a graph or table will be displayed.
-A working model already exists in a production enviroment. I'd like to 
-streamline it, and add some more functionality before releasing it to 
-the world. Shooting for early mid Summer 2001.
+An Web interface for Relations-Family, Reations-Query, and Relations-Display. 
+It creates complex (too complex?) web pages for selecting from the different 
+tables in a Relations-Family object. It also has controls for specifying the 
+grouping and ordering of data with a Relations-Query object, which is also 
+based on selections in the Relations-Family object. That Relations-Query can 
+then be passed to a Relations-Display object, and a graph and/or table will 
+be displayed.
 
 =cut

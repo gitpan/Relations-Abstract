@@ -1,6 +1,6 @@
 NAME
 
-  Relations::Abstract v0.93
+  Relations::Abstract v0.94
 
 DESCRIPTION
 
@@ -22,16 +22,16 @@ INSTALlATION
     perl 5.004
     DBI >= 1.13
     DBD::mysql >= 1.18
-    Relations >= 0.93
-    Relations::Query >= 0.92
+    Relations >= 0.94
+    Relations::Query >= 0.93
 
-  WIN32 (Relations-Abstract-0.93.zip)
+  WIN32 (Relations-Abstract-0.94.zip)
 
     Extract zip file into a directory and type
 
     ppm install Relations-Abstract.ppd
 
-  UN*X (Relations-Abstract-0.93.tar.gz)
+  UN*X (Relations-Abstract-0.94.tar.gz)
 
     Extract bundle into a directory and type
 
